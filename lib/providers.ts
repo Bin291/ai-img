@@ -1,13 +1,20 @@
 // =============================================================
 // Pollinations.ai — sinh ảnh MIỄN PHÍ, không cần API key
-// Text-to-image. Trả về danh sách data URL.
+// - Text-to-image: model flux / turbo
+// - Image-to-image: model kontext, ảnh gốc truyền bằng URL công khai
+// Trả về danh sách data URL.
 // =============================================================
+
+export type GenMode = "text-to-image" | "image-to-image";
 
 export interface GenerateInput {
   prompt: string;
-  model?: string; // "flux" | "turbo"
+  mode?: GenMode;
+  model?: string; // "flux" | "turbo" | "kontext"
   size?: string; // "1024x1024"
   n?: number; // số ảnh
+  imageUrl?: string; // ảnh gốc cho image-to-image (URL công khai)
+  token?: string; // token Pollinations (bắt buộc cho img2img/kontext, lấy tại enter.pollinations.ai)
 }
 
 export interface GenerateResult {
@@ -29,16 +36,40 @@ async function toDataUrl(res: Response): Promise<string> {
 }
 
 async function generateOne(input: GenerateInput): Promise<string> {
-  const { prompt, model = "flux", size = "1024x1024" } = input;
+  const { prompt, mode = "text-to-image", size = "1024x1024" } = input;
   const [w, h] = size.split("x");
   const seed = Math.floor(Math.random() * 1_000_000);
-  const url =
+
+  // Image-to-image dùng model kontext + tham số image (URL công khai)
+  const isImg2Img = mode === "image-to-image";
+  const model = isImg2Img ? "kontext" : input.model || "flux";
+
+  let url =
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
     `?width=${w || 1024}&height=${h || 1024}&model=${encodeURIComponent(model)}` +
     `&seed=${seed}&nologo=true`;
 
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Pollinations lỗi ${res.status}`);
+  if (isImg2Img) {
+    if (!input.imageUrl?.trim()) throw new Error("Cần URL ảnh gốc cho image-to-image");
+    if (!input.token?.trim())
+      throw new Error(
+        "Image-to-image (model kontext) cần TOKEN Pollinations. Lấy token miễn phí tại https://enter.pollinations.ai rồi dán vào ô Token."
+      );
+    url += `&image=${encodeURIComponent(input.imageUrl.trim())}`;
+  }
+
+  const headers: Record<string, string> = {};
+  if (input.token?.trim()) headers.Authorization = `Bearer ${input.token.trim()}`;
+
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const j = await res.json();
+      detail = j?.message || j?.error || "";
+    } catch {}
+    throw new Error(`Pollinations lỗi ${res.status}${detail ? `: ${detail}` : ""}`);
+  }
   return toDataUrl(res);
 }
 

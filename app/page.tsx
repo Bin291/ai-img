@@ -1,21 +1,56 @@
 "use client";
 
-import { useState } from "react";
-import { MODELS, SIZES } from "@/lib/providers";
+import { useEffect, useRef, useState } from "react";
+import { MODELS, SIZES, GenMode } from "@/lib/providers";
 
 export default function Home() {
+  const [mode, setMode] = useState<GenMode>("text-to-image");
   const [model, setModel] = useState(MODELS[0].value);
   const [prompt, setPrompt] = useState("");
   const [size, setSize] = useState(SIZES[0]);
   const [n, setN] = useState(1);
+  const [imageUrl, setImageUrl] = useState("");
+  const [token, setToken] = useState("");
+
+  // Nhớ token trong trình duyệt
+  useEffect(() => {
+    setToken(localStorage.getItem("pollinations_token") || "");
+  }, []);
+  function saveToken(v: string) {
+    setToken(v);
+    localStorage.setItem("pollinations_token", v);
+  }
 
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<string[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Upload thất bại");
+      setImageUrl(json.url);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  }
 
   async function onGenerate() {
     setError(null);
     if (!prompt.trim()) return setError("Vui lòng nhập prompt.");
+    if (mode === "image-to-image" && !imageUrl.trim())
+      return setError("Vui lòng dán URL ảnh gốc.");
 
     setLoading(true);
     setResults([]);
@@ -23,7 +58,7 @@ export default function Home() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, prompt, size, n }),
+        body: JSON.stringify({ mode, model, prompt, size, n, imageUrl, token }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `Lỗi ${res.status}`);
@@ -44,33 +79,108 @@ export default function Home() {
         </div>
       </div>
       <p className="subtitle">
-        Tạo ảnh từ văn bản (text-to-image) bằng Pollinations.ai — miễn phí, không cần API key.
+        Tạo ảnh bằng Pollinations.ai — miễn phí, không cần API key.
       </p>
 
       <div className="grid">
         {/* ---------------- Bảng điều khiển ---------------- */}
         <div className="panel">
+          {/* Chế độ */}
+          <div className="field">
+            <label className="lbl">Chế độ</label>
+            <div className="seg">
+              <button
+                className={mode === "text-to-image" ? "active" : ""}
+                onClick={() => setMode("text-to-image")}
+              >
+                Text → Image
+              </button>
+              <button
+                className={mode === "image-to-image" ? "active" : ""}
+                onClick={() => setMode("image-to-image")}
+              >
+                Image → Image
+              </button>
+            </div>
+          </div>
+
+          {/* Ảnh gốc (img2img) */}
+          {mode === "image-to-image" && (
+            <>
+              <div className="field">
+                <label className="lbl">Token Pollinations (bắt buộc cho img2img)</label>
+                <input
+                  type="password"
+                  value={token}
+                  onChange={(e) => saveToken(e.target.value)}
+                  placeholder="Dán token từ enter.pollinations.ai"
+                />
+                <div className="hint">
+                  Img2img (model kontext) cần token miễn phí. Lấy tại{" "}
+                  <a href="https://enter.pollinations.ai" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+                    enter.pollinations.ai
+                  </a>
+                  .
+                </div>
+              </div>
+              <div className="field">
+                <label className="lbl">Ảnh gốc</label>
+                <div className="dropzone" onClick={() => fileRef.current?.click()}>
+                  {uploading ? "Đang tải ảnh lên…" : imageUrl ? "Đổi ảnh khác…" : "Bấm để chọn ảnh từ máy (PNG/JPG)"}
+                </div>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: "none" }}
+                  onChange={onPickFile}
+                />
+                <input
+                  type="url"
+                  value={imageUrl}
+                  onChange={(e) => setImageUrl(e.target.value)}
+                  placeholder="…hoặc dán URL ảnh: https://.../anh.jpg"
+                  style={{ marginTop: 8 }}
+                />
+                <div className="hint">
+                  Ảnh sẽ được up lên host công khai (catbox.moe) để Pollinations tải về.
+                </div>
+                {imageUrl.trim() && !uploading && (
+                  <img className="preview-src" src={imageUrl} alt="ảnh gốc" />
+                )}
+              </div>
+            </>
+          )}
+
           {/* Prompt */}
           <div className="field">
-            <label className="lbl">Prompt (mô tả ảnh)</label>
+            <label className="lbl">
+              Prompt {mode === "image-to-image" ? "(mô tả thay đổi mong muốn)" : "(mô tả ảnh)"}
+            </label>
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Ví dụ: một chú mèo phi hành gia, phong cách tranh sơn dầu, ánh sáng điện ảnh"
+              placeholder={
+                mode === "image-to-image"
+                  ? "Ví dụ: đổi nền thành bãi biển hoàng hôn"
+                  : "Ví dụ: một chú mèo phi hành gia, phong cách tranh sơn dầu, ánh sáng điện ảnh"
+              }
             />
           </div>
 
-          {/* Model */}
-          <div className="field">
-            <label className="lbl">Model</label>
-            <select value={model} onChange={(e) => setModel(e.target.value)}>
-              {MODELS.map((m) => (
-                <option key={m.value} value={m.value}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Model (chỉ text-to-image) */}
+          {mode === "text-to-image" && (
+            <div className="field">
+              <label className="lbl">Model</label>
+              <select value={model} onChange={(e) => setModel(e.target.value)}>
+                {MODELS.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Tùy chọn */}
           <div className="field row">
